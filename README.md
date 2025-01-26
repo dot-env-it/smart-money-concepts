@@ -27,7 +27,7 @@ smc expects properly formated ohlc DataFrame, with column names in lowercase: ["
 ### Fair Value Gap (FVG)
 
 ```python
-smc.fvg(ohlc, join_consecutive=False)
+smc.fvg(ohlc, join_consecutive=False, mitigation_percentage=0, mitigation_index_after=2)
 ```
 
 A fair value gap is when the previous high is lower than the next low if the current candle is bullish.
@@ -35,6 +35,8 @@ Or when the previous low is higher than the next high if the current candle is b
 
 parameters:<br>
 join_consecutive: bool - if there are multiple FVG in a row then they will be merged into one using the highest top and the lowest bottom<br>
+mitigation_percentage: float - consider mitigated if any candle's low is retraced to this percentage.(values between 0-1)
+mitigation_index_after: int - check for mitigation after this index
 
 returns:<br>
 FVG = 1 if bullish fair value gap, -1 if bearish fair value gap<br>
@@ -57,6 +59,7 @@ swing_length: int - the amount of candles to look back and forward to determine 
 returns:<br>
 HighLow = 1 if swing high, -1 if swing low<br>
 Level = the level of the swing high or low<br>
+Index = Index of high or low
 
 ### Break of Structure (BOS) & Change of Character (CHoCH)
 
