@@ -53,7 +53,7 @@ class smc:
     __version__ = "0.0.21"
 
     @classmethod
-    def fvg(cls, ohlc: DataFrame, join_consecutive=False) -> Series:
+    def fvg(cls, ohlc: DataFrame, join_consecutive=False, mitigation_percentage=0, mitigation_index_after=2) -> DataFrame:
         """
         FVG - Fair Value Gap
         A fair value gap is when the previous high is lower than the next low if the current candle is bullish.
@@ -61,6 +61,8 @@ class smc:
 
         parameters:
         join_consecutive: bool - if there are multiple FVG in a row then they will be merged into one using the highest top and the lowest bottom
+        mitigation_percentage: float - consider mitigated if low is retraced to this percentage between 0-1
+        mitigation_index_after: int - check for mitigation after this index
 
         returns:
         FVG = 1 if bullish fair value gap, -1 if bearish fair value gap
@@ -114,7 +116,9 @@ class smc:
         for i in np.where(~np.isnan(fvg))[0]:
             mask = np.zeros(len(ohlc), dtype=np.bool_)
             if fvg[i] == 1:
-                mask = ohlc["low"][i + 2 :] <= top[i]
+                mitigation_level = top[i] - (top[i] - bottom[i]) * mitigation_percentage
+
+                mask = ohlc["low"][i + mitigation_index_after :] <= mitigation_level
             elif fvg[i] == -1:
                 mask = ohlc["high"][i + 2 :] >= bottom[i]
             if np.any(mask):
@@ -134,7 +138,7 @@ class smc:
         )
 
     @classmethod
-    def swing_highs_lows(cls, ohlc: DataFrame, swing_length: int = 50) -> Series:
+    def swing_highs_lows(cls, ohlc: DataFrame, swing_length: int = 50) -> DataFrame:
         """
         Swing Highs and Lows
         A swing high is when the current high is the highest high out of the swing_length amount of candles before and after.
@@ -210,10 +214,14 @@ class smc:
             np.nan,
         )
 
+        # get the indexes of the respective swing high or low
+        indexes = np.where(~np.isnan(swing_highs_lows), np.arange(len(ohlc)), np.nan)
+
         return pd.concat(
             [
                 pd.Series(swing_highs_lows, name="HighLow"),
                 pd.Series(level, name="Level"),
+                pd.Series(indexes, name="Index"),
             ],
             axis=1,
         )
@@ -221,7 +229,7 @@ class smc:
     @classmethod
     def bos_choch(
         cls, ohlc: DataFrame, swing_highs_lows: DataFrame, close_break: bool = True
-    ) -> Series:
+    ) -> DataFrame:
         """
         BOS - Break of Structure
         CHoCH - Change of Character
@@ -594,7 +602,7 @@ class smc:
     @classmethod
     def liquidity(
         cls, ohlc: DataFrame, swing_highs_lows: DataFrame, range_percent: float = 0.01
-    ) -> Series:
+    ) -> DataFrame:
         """
         Liquidity
         Liquidity is when there are multiply highs within a small range of each other.
@@ -623,7 +631,7 @@ class smc:
         liquidity_swept = np.zeros(len(ohlc), dtype=np.int32)
 
         for i in range(len(ohlc)):
-            if swing_highs_lows["HighLow"][i] == 1:
+            if i in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][i] == 1:
                 high_level = swing_highs_lows["Level"][i]
                 range_low = high_level - pip_range
                 range_high = high_level + pip_range
@@ -633,13 +641,13 @@ class smc:
                 swept = 0
                 for c in range(i + 1, len(ohlc)):
                     if (
-                        swing_highs_lows["HighLow"][c] == 1
+                        c in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][c] == 1
                         and range_low <= swing_highs_lows["Level"][c] <= range_high
                     ):
                         end = c
                         temp_liquidity_level.append(swing_highs_lows["Level"][c])
                         swing_highs_lows.loc[c, "HighLow"] = 0
-                    if ohlc["high"].iloc[c] >= range_high:
+                    if c in swing_highs_lows["HighLow"] and ohlc["high"].iloc[c] >= range_high:
                         swept = c
                         break
                 if len(temp_liquidity_level) > 1:
@@ -651,7 +659,7 @@ class smc:
 
         # now do the same for the lows
         for i in range(len(ohlc)):
-            if swing_highs_lows["HighLow"][i] == -1:
+            if i in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][i] == -1:
                 low_level = swing_highs_lows["Level"][i]
                 range_low = low_level - pip_range
                 range_high = low_level + pip_range
@@ -661,13 +669,13 @@ class smc:
                 swept = 0
                 for c in range(i + 1, len(ohlc)):
                     if (
-                        swing_highs_lows["HighLow"][c] == -1
+                        c in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][c] == -1
                         and range_low <= swing_highs_lows["Level"][c] <= range_high
                     ):
                         end = c
                         temp_liquidity_level.append(swing_highs_lows["Level"][c])
                         swing_highs_lows.loc[c, "HighLow"] = 0
-                    if ohlc["low"].iloc[c] <= range_low:
+                    if c in swing_highs_lows["HighLow"] and ohlc["low"].iloc[c] <= range_low:
                         swept = c
                         break
                 if len(temp_liquidity_level) > 1:
@@ -690,7 +698,7 @@ class smc:
         return pd.concat([liquidity, level, liquidity_end, liquidity_swept], axis=1)
 
     @classmethod
-    def previous_high_low(cls, ohlc: DataFrame, time_frame: str = "1D") -> Series:
+    def previous_high_low(cls, ohlc: DataFrame, time_frame: str = "1D") -> DataFrame:
         """
         Previous High Low
         This method returns the previous high and low of the given time frame.
@@ -738,7 +746,7 @@ class smc:
                 currently_broken_low = False
                 last_broken_time = resampled_previous_index
 
-            previous_high[i] = resampled_ohlc["high"].iloc[resampled_previous_index] 
+            previous_high[i] = resampled_ohlc["high"].iloc[resampled_previous_index]
             previous_low[i] = resampled_ohlc["low"].iloc[resampled_previous_index]
             currently_broken_high = ohlc["high"].iloc[i] > previous_high[i] or currently_broken_high
             currently_broken_low = ohlc["low"].iloc[i] < previous_low[i] or currently_broken_low
@@ -760,7 +768,7 @@ class smc:
         start_time: str = "",
         end_time: str = "",
         time_zone: str = "UTC",
-    ) -> Series:
+    ) -> DataFrame:
         """
         Sessions
         This method returns wwhich candles are within the session specified
@@ -861,7 +869,7 @@ class smc:
         return pd.concat([active, high, low], axis=1)
 
     @classmethod
-    def retracements(cls, ohlc: DataFrame, swing_highs_lows: DataFrame) -> Series:
+    def retracements(cls, ohlc: DataFrame, swing_highs_lows: DataFrame) -> DataFrame:
         """
         Retracement
         This method returns the percentage of a retracement from the swing high or low
@@ -884,11 +892,11 @@ class smc:
         top = 0
         bottom = 0
         for i in range(len(ohlc)):
-            if swing_highs_lows["HighLow"][i] == 1:
+            if i in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][i] == 1:
                 direction[i] = 1
                 top = swing_highs_lows["Level"][i]
                 # deepest_retracement[i] = 0
-            elif swing_highs_lows["HighLow"][i] == -1:
+            elif i in swing_highs_lows["HighLow"] and swing_highs_lows["HighLow"][i] == -1:
                 direction[i] = -1
                 bottom = swing_highs_lows["Level"][i]
                 # deepest_retracement[i] = 0
